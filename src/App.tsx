@@ -1,432 +1,192 @@
-import { useState, useRef, useCallback, useEffect } from "react";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Card, CardContent } from "@/components/ui/card";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 
-const pad = (n, d = 2) => String(Math.floor(n)).padStart(d, "0");
+type Player = "X" | "O";
+type Board = (Player | null)[];
+type WinResult = { winner: Player; line: [number, number, number] } | null;
+type Scores = Record<Player, number>;
 
-function splitTime(ms) {
-  return {
-    h: Math.floor(ms / 3600000),
-    m: Math.floor((ms % 3600000) / 60000),
-    s: Math.floor((ms % 60000) / 1000),
-    cs: Math.floor((ms % 1000) / 10),
-  };
+const WINNING_LINES: [number, number, number][] = [
+  [0,1,2],[3,4,5],[6,7,8],
+  [0,3,6],[1,4,7],[2,5,8],
+  [0,4,8],[2,4,6],
+];
+
+// X → --primary, O → --accent-foreground (always a visible, contrasting shadcn color)
+const X_COLOR = "hsl(var(--primary))";
+const O_COLOR = "hsl(var(--accent-foreground))";
+
+function checkWinner(board: Board): WinResult {
+  for (const [a, b, c] of WINNING_LINES) {
+    if (board[a] && board[a] === board[b] && board[a] === board[c])
+      return { winner: board[a] as Player, line: [a, b, c] };
+  }
+  return null;
 }
 
-function fmtLap(ms) {
-  const { h, m, s, cs } = splitTime(ms);
-  return `${pad(h)}:${pad(m)}:${pad(s)}.${pad(cs)}`;
+interface PlayerCardProps {
+  player: Player;
+  isActive: boolean;
+  isWinner: boolean;
+  score: number;
 }
 
-// ── Plain text time display ──────────────────────────────────────────────────
-function TimeDisplay({ ms }) {
-  const { h, m, s, cs } = splitTime(ms);
+function PlayerCard({ player, isActive, isWinner, score }: PlayerCardProps) {
+  const isX = player === "X";
+  const playerColor = isX ? X_COLOR : O_COLOR;
+  const dimColor = "hsl(var(--muted-foreground))";
+  const symbolColor = isActive || isWinner ? playerColor : dimColor;
+
+  const cardStyle: React.CSSProperties =
+    isWinner || isActive
+      ? {
+          border: `2px solid ${playerColor}`,
+          background: `color-mix(in srgb, ${playerColor} 8%, transparent)`,
+          boxShadow: isWinner ? `0 0 0 3px color-mix(in srgb, ${playerColor} 20%, transparent)` : undefined,
+        }
+      : {};
+
+  const labelStyle: React.CSSProperties =
+    isWinner || isActive ? { color: playerColor } : {};
+
   return (
-    <div className="flex items-center justify-center gap-1 tabular-nums">
-      <span className="text-5xl font-semibold tracking-tight text-foreground">
-        {pad(h)}:{pad(m)}:{pad(s)}
+    <div className="flex flex-col items-center gap-2">
+      <div
+        className={`w-16 h-16 rounded-2xl flex items-center justify-center transition-all duration-300
+          ${isActive || isWinner ? "" : "border border-border bg-muted"}`}
+        style={cardStyle}
+      >
+        <span className="text-2xl font-bold leading-none" style={{ color: symbolColor }}>
+          {isX ? "x" : "o"}
+        </span>
+      </div>
+      <span
+        className="text-xs font-semibold tracking-widest uppercase transition-colors duration-300"
+        style={isWinner ? { ...labelStyle, fontWeight: 900 } : isActive ? labelStyle : { color: dimColor }}
+      >
+        {isWinner ? "🏆 Winner!" : `Player ${player}`}
       </span>
-      <span className="text-2xl font-normal text-muted-foreground self-end pb-1">
-        .{pad(cs)}
+      <span className={`text-lg font-bold tabular-nums ${isActive || isWinner ? "text-foreground" : "text-muted-foreground"}`}>
+        {score}
       </span>
     </div>
   );
 }
 
-// ── Custom Lap Button ────────────────────────────────────────────────────────
-function LapButton({ onClick, disabled, count }) {
+interface CellProps {
+  value: Player | null;
+  onClick: () => void;
+  isWinning: boolean;
+  disabled: boolean;
+}
+
+function Cell({ value, onClick, isWinning, disabled }: CellProps) {
   return (
-    <Button
-      variant="outline"
+    <button
       onClick={onClick}
-      disabled={disabled}
-      className="rounded-full min-w-[80px] gap-2"
+      disabled={disabled || !!value}
+      className={`aspect-square rounded-2xl flex items-center justify-center transition-all duration-200
+        ${isWinning
+          ? "bg-primary/10 border-2 border-primary"
+          : value
+          ? "bg-background border border-border"
+          : "bg-muted border border-border hover:bg-background hover:border-input hover:shadow-sm cursor-pointer active:scale-95"
+        }`}
     >
-      <svg
-        width={13}
-        height={13}
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={2}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <circle cx={12} cy={12} r={10} />
-        <polyline points="12 6 12 12 16 14" />
-        <line x1={2} y1={12} x2={5} y2={12} />
-        <line x1={19} y1={12} x2={22} y2={12} />
-      </svg>
-      Lap
-      {count > 0 && (
-        <Badge
-          variant="secondary"
-          className="h-4 min-w-4 px-1 text-[10px] rounded-full"
-        >
-          {count}
-        </Badge>
+      {value === "X" && (
+        <span className="text-3xl font-bold leading-none animate-[pop_0.15s_ease-out]"
+          style={{ color: X_COLOR }}>x</span>
       )}
-    </Button>
+      {value === "O" && (
+        <span className="text-3xl font-bold leading-none animate-[pop_0.15s_ease-out]"
+          style={{ color: O_COLOR }}>o</span>
+      )}
+    </button>
   );
 }
 
-// ── Stopwatch ────────────────────────────────────────────────────────────────
-function Stopwatch() {
-  const [elapsed, setElapsed] = useState(0);
-  const [running, setRunning] = useState(false);
-  const [laps, setLaps] = useState([]);
-  const [lapStart, setLapStart] = useState(0);
-  const startTs = useRef(null);
-  const rafId = useRef(null);
+export default function TicTacToe() {
+  const [board, setBoard] = useState<Board>(Array(9).fill(null));
+  const [isX, setIsX] = useState<boolean>(true);
+  const [scores, setScores] = useState<Scores>({ X: 0, O: 0 });
+  const [nextStartsX, setNextStartsX] = useState<boolean>(false);
 
-  const tick = useCallback(() => {
-    setElapsed(Date.now() - startTs.current);
-    rafId.current = requestAnimationFrame(tick);
-  }, []);
+  const result = checkWinner(board);
+  const winner = result?.winner;
+  const winLine: number[] = result?.line ?? [];
+  const isDraw = !winner && board.every(Boolean);
 
-  const toggle = () => {
-    if (!running) {
-      startTs.current = Date.now() - elapsed;
-      rafId.current = requestAnimationFrame(tick);
-      setRunning(true);
-    } else {
-      cancelAnimationFrame(rafId.current);
-      setRunning(false);
+  const handleClick = (i: number): void => {
+    if (board[i] || winner) return;
+    const next: Board = [...board];
+    next[i] = isX ? "X" : "O";
+    const newResult = checkWinner(next);
+    if (newResult) {
+      setScores(s => ({ ...s, [newResult.winner]: s[newResult.winner] + 1 }));
     }
+    setBoard(next);
+    setIsX(!isX);
   };
 
-  const recordLap = () => {
-    if (!running) return;
-    const split = elapsed - lapStart;
-    setLaps((prev) => [...prev, { n: prev.length + 1, split, total: elapsed }]);
-    setLapStart(elapsed);
+  const reset = (): void => {
+    setBoard(Array(9).fill(null));
+    setIsX(nextStartsX);
+    setNextStartsX(prev => !prev);
   };
 
-  const reset = () => {
-    cancelAnimationFrame(rafId.current);
-    setRunning(false);
-    setElapsed(0);
-    setLapStart(0);
-    setLaps([]);
-  };
-
-  useEffect(() => () => cancelAnimationFrame(rafId.current), []);
-
-  const splits = laps.map((l) => l.split);
-  const minS = Math.min(...splits),
-    maxS = Math.max(...splits);
-  const displayLaps = [...laps].reverse();
+  const currentPlayer: Player = isX ? "X" : "O";
+  const status = winner
+    ? `Player ${winner} wins!`
+    : isDraw
+    ? "It's a draw!"
+    : `Player ${currentPlayer}'s turn`;
 
   return (
-    <div>
-      <div className="py-6 flex justify-center">
-        <TimeDisplay ms={elapsed} />
+    <div className="min-h-screen flex flex-col items-center justify-center bg-background px-4">
+      <style>{`@keyframes pop{0%{transform:scale(0.5);opacity:0}80%{transform:scale(1.1)}100%{transform:scale(1);opacity:1}}`}</style>
+
+      <div className="mb-8 text-center">
+        <h1 className="text-4xl font-black tracking-tight">
+          <span className="text-foreground">TIC </span>
+          <span className="text-primary">TAC </span>
+          <span className="text-foreground">TOE</span>
+        </h1>
+        <p className="text-sm text-muted-foreground mt-1 font-medium">{status}</p>
       </div>
 
-      <div className="flex gap-2 justify-center mb-5">
-        <LapButton
-          onClick={recordLap}
-          disabled={!running}
-          count={laps.length}
-        />
-        <Button
-          variant="outline"
-          onClick={reset}
-          className="rounded-full min-w-[80px]"
-        >
-          Reset
-        </Button>
-        <Button
-          onClick={toggle}
-          className="rounded-full min-w-[90px]"
-          variant={running ? "destructive" : "default"}
-        >
-          {running ? "Stop" : "Start"}
-        </Button>
+      <div className="flex items-center gap-10 mb-8">
+        <PlayerCard player="X" isActive={!winner && !isDraw && isX} isWinner={winner === "X"} score={scores.X} />
+        <span className="text-sm font-bold text-muted-foreground tracking-widest">VS</span>
+        <PlayerCard player="O" isActive={!winner && !isDraw && !isX} isWinner={winner === "O"} score={scores.O} />
       </div>
 
-      {laps.length > 0 && (
-        <div className="border-t pt-3">
-          <div className="grid grid-cols-[36px_1fr_auto_8px] gap-x-3 text-[11px] text-muted-foreground uppercase tracking-wider px-2 pb-2">
-            <span>#</span>
-            <span>Split</span>
-            <span>Total</span>
-            <span />
-          </div>
-          <div className="max-h-48 overflow-y-auto flex flex-col gap-0.5">
-            {displayLaps.map((l) => {
-              const isFastest = laps.length > 1 && l.split === minS;
-              const isSlowest = laps.length > 1 && l.split === maxS;
-              const isLatest = l.n === laps.length;
-              return (
-                <div
-                  key={l.n}
-                  className={`grid grid-cols-[36px_1fr_auto_8px] gap-x-3 items-center px-2 py-2 rounded-lg text-sm tabular-nums ${isLatest ? "bg-muted" : ""}`}
-                >
-                  <span className="text-muted-foreground font-medium">
-                    {pad(l.n, 2)}
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    {fmtLap(l.split)}
-                    {isFastest && (
-                      <Badge
-                        variant="outline"
-                        className="text-[10px] h-4 px-1.5 text-green-600 border-green-300 bg-green-50"
-                      >
-                        ↑ best
-                      </Badge>
-                    )}
-                    {isSlowest && (
-                      <Badge
-                        variant="outline"
-                        className="text-[10px] h-4 px-1.5 text-red-600 border-red-300 bg-red-50"
-                      >
-                        ↓ slow
-                      </Badge>
-                    )}
-                  </span>
-                  <span className="text-muted-foreground">
-                    {fmtLap(l.total)}
-                  </span>
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full justify-self-center ${isLatest ? "bg-foreground" : ""}`}
-                  />
-                </div>
-              );
-            })}
-          </div>
+      <Card className="p-4 rounded-3xl border-0 shadow-sm bg-muted">
+        <div className="grid grid-cols-3 gap-3 w-[280px]">
+          {board.map((cell, i) => (
+            <Cell
+              key={i}
+              value={cell}
+              onClick={() => handleClick(i)}
+              isWinning={winLine.includes(i)}
+              disabled={!!winner || isDraw}
+            />
+          ))}
         </div>
-      )}
-    </div>
-  );
-}
-
-// ── Custom Timer Input ───────────────────────────────────────────────────────
-function TimerInput({ value, onChange, label, max }) {
-  const [editing, setEditing] = useState(false);
-  const [raw, setRaw] = useState("");
-
-  const commit = (val) => {
-    const n = Math.max(0, Math.min(max - 1, parseInt(val, 10) || 0));
-    onChange(n);
-    setEditing(false);
-  };
-
-  return (
-    <div className="flex flex-col items-center gap-1">
-      <Button
-        variant="ghost"
-        size="sm"
-        className="h-7 w-9 p-0 text-muted-foreground"
-        onClick={() => onChange((value + 1) % max)}
-      >
-        ▲
-      </Button>
-
-      {editing ? (
-        <input
-          autoFocus
-          type="number"
-          min={0}
-          max={max - 1}
-          value={raw}
-          onChange={(e) => setRaw(e.target.value)}
-          onBlur={() => commit(raw)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") commit(raw);
-            if (e.key === "Escape") setEditing(false);
-          }}
-          className="w-14 text-center text-2xl font-semibold tabular-nums border border-input rounded-md bg-background text-foreground py-1 outline-none focus:ring-2 focus:ring-ring"
-        />
-      ) : (
-        <button
-          onClick={() => {
-            setRaw(String(value));
-            setEditing(true);
-          }}
-          title="Click to type"
-          className="text-2xl font-semibold tabular-nums text-foreground w-14 text-center py-1 rounded-md hover:bg-muted cursor-text transition-colors"
-        >
-          {pad(value)}
-        </button>
-      )}
-
-      <Button
-        variant="ghost"
-        size="sm"
-        className="h-7 w-9 p-0 text-muted-foreground"
-        onClick={() => onChange((value - 1 + max) % max)}
-      >
-        ▼
-      </Button>
-      <span className="text-[10px] text-muted-foreground uppercase tracking-wide">
-        {label}
-      </span>
-    </div>
-  );
-}
-
-// ── Countdown Timer ──────────────────────────────────────────────────────────
-function Timer() {
-  const [setting, setSetting] = useState({ h: 0, m: 5, s: 0 });
-  const [remaining, setRemaining] = useState(null);
-  const [running, setRunning] = useState(false);
-  const [done, setDone] = useState(false);
-  const startTs = useRef(null);
-  const initialMs = useRef(0);
-  const rafId = useRef(null);
-
-  const totalMs = setting.h * 3600000 + setting.m * 60000 + setting.s * 1000;
-
-  const tick = useCallback(() => {
-    const left = initialMs.current - (Date.now() - startTs.current);
-    if (left <= 0) {
-      setRemaining(0);
-      setRunning(false);
-      setDone(true);
-      return;
-    }
-    setRemaining(left);
-    rafId.current = requestAnimationFrame(tick);
-  }, []);
-
-  const start = () => {
-    const ms = remaining !== null ? remaining : totalMs;
-    if (ms <= 0) return;
-    initialMs.current = ms;
-    startTs.current = Date.now();
-    setDone(false);
-    setRunning(true);
-    rafId.current = requestAnimationFrame(tick);
-  };
-
-  const pause = () => {
-    cancelAnimationFrame(rafId.current);
-    setRunning(false);
-  };
-
-  const reset = () => {
-    cancelAnimationFrame(rafId.current);
-    setRunning(false);
-    setRemaining(null);
-    setDone(false);
-  };
-
-  useEffect(() => () => cancelAnimationFrame(rafId.current), []);
-
-  const displayMs = remaining !== null ? remaining : totalMs;
-  const progress = totalMs > 0 && remaining !== null ? remaining / totalMs : 1;
-
-  return (
-    <div>
-      {!running && remaining === null ? (
-        <div className="py-5">
-          <div className="flex justify-center items-center gap-2">
-            <TimerInput
-              value={setting.h}
-              onChange={(v) => setSetting((p) => ({ ...p, h: v }))}
-              label="hr"
-              max={24}
-            />
-            <span className="text-2xl text-muted-foreground mb-6 font-light">
-              :
-            </span>
-            <TimerInput
-              value={setting.m}
-              onChange={(v) => setSetting((p) => ({ ...p, m: v }))}
-              label="min"
-              max={60}
-            />
-            <span className="text-2xl text-muted-foreground mb-6 font-light">
-              :
-            </span>
-            <TimerInput
-              value={setting.s}
-              onChange={(v) => setSetting((p) => ({ ...p, s: v }))}
-              label="sec"
-              max={60}
-            />
-          </div>
-          <p className="text-center text-xs text-muted-foreground mt-2">
-            tap a number to type a custom value
-          </p>
-        </div>
-      ) : (
-        <div className="py-6 flex flex-col items-center gap-3">
-          <TimeDisplay ms={displayMs} />
-          <div className="w-full h-1 bg-muted rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all duration-500 ${done ? "bg-destructive" : "bg-primary"}`}
-              style={{ width: `${Math.max(0, Math.min(1, progress)) * 100}%` }}
-            />
-          </div>
-          {done && (
-            <p className="text-destructive text-sm font-medium flex items-center gap-1.5">
-              <svg
-                width={14}
-                height={14}
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2.5}
-              >
-                <circle cx={12} cy={12} r={10} />
-                <line x1={12} y1={8} x2={12} y2={12} />
-                <line x1={12} y1={16} x2={12.01} y2={16} />
-              </svg>
-              Time's up!
-            </p>
-          )}
-        </div>
-      )}
-
-      <div className="flex gap-2 justify-center">
-        <Button
-          variant="outline"
-          onClick={reset}
-          className="rounded-full min-w-[80px]"
-        >
-          Reset
-        </Button>
-        <Button
-          onClick={running ? pause : start}
-          disabled={!running && remaining === null && totalMs === 0}
-          variant={running ? "destructive" : "default"}
-          className="rounded-full min-w-[90px]"
-        >
-          {running ? "Pause" : remaining !== null && !done ? "Resume" : "Start"}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-// ── Root ─────────────────────────────────────────────────────────────────────
-export default function App() {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
-      <Card className="w-[440px] rounded-2xl shadow-md">
-        <CardContent className="p-8">
-          <Tabs defaultValue="stopwatch">
-            <TabsList className="w-full rounded-full mb-1">
-              <TabsTrigger value="stopwatch" className="flex-1 rounded-full">
-                Stopwatch
-              </TabsTrigger>
-              <TabsTrigger value="timer" className="flex-1 rounded-full">
-                Timer
-              </TabsTrigger>
-            </TabsList>
-            <TabsContent value="stopwatch">
-              <Stopwatch />
-            </TabsContent>
-            <TabsContent value="timer">
-              <Timer />
-            </TabsContent>
-          </Tabs>
-        </CardContent>
       </Card>
+
+      <Button
+        variant="ghost"
+        onClick={reset}
+        className="mt-8 text-xs tracking-widest uppercase text-muted-foreground hover:text-foreground gap-2"
+      >
+        <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+          <path d="M3 3v5h5"/>
+        </svg>
+        New Game
+      </Button>
     </div>
   );
 }
